@@ -97,7 +97,7 @@ public class TerraUILoader : ModSystem
     /// <returns>The autoloaded instance of the desired SmartUIState</returns>
     public static T GetUIState<T>() where T : SmartUIState
     {
-        return UIStates.FirstOrDefault(n => n is T) as T;
+        return UIStates?.FirstOrDefault(n => n is T) as T;
     }
 
     /// <summary>
