@@ -1,0 +1,6 @@
+displayName = Terra Namp
+author = Baguletti
+version = 1.0
+modReferences = SilkyUIFramework
+weakReferences = TerrariaAmbienceAPI, TerrariaAmbience, BetterRussian
+side = Both

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../catalyst/Mod.Build.targets" />
+  <PropertyGroup>
+    <AssemblyName>Terra_Namp</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <AssemblyPublicizerPaths>$(AssemblyPublicizerPaths);$(MSBuildThisFileDirectory)ultrasonic.publicizer.js</AssemblyPublicizerPaths>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Assets\UI\Themes\Musical\Box.png" />
+    <None Remove="Assets\UI\Themes\NoBox.png" />
+    <None Remove="TODO.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\Effects\*.xnb">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>
