@@ -149,3 +149,56 @@ Play (1), Stop (2), Pause (3), Resume (4), SeekPosition (5), SlowedReverb (6), R
 - **TerrariaAmbienceAPI / TerrariaAmbience** — weak reference (ambient volume control)
 - **BetterRussian** — weak reference (a Cyrillic font similar to Vanilla)
 - tModLoader .NET 8.0
+
+## Dedicated Server Administration
+
+On a dedicated server, no one has admin rights by default. The server operator must use console commands to grant permissions.
+
+### Console Commands
+
+#### `terra-namp-admin <player_name>`
+
+Grants Admin role to a player. The **first** player promoted with this command automatically becomes a **Super User** (immutable admin).
+
+```
+terra-namp-admin PlayerName
+terra-namp-admin Player With Spaces
+```
+
+#### `terra-namp-superuser <player_name>`
+
+Grants immutable Super User status to a player. Super Users cannot be demoted by other admins — only via the server console.
+
+```
+terra-namp-superuser TrustedModerator
+```
+
+### Permission Roles
+
+| Role | Level | Capabilities |
+|------|-------|-------------|
+| Listener | 0 | View only (default for all joining players) |
+| Controller | 1 | Play / Pause / Stop / Seek / Download |
+| Admin | 2 | Full control + manage other players' permissions |
+
+### Super User Protection
+
+- Super Users cannot be modified via the Admin Panel UI or network packets
+- Server-side validation blocks all permission changes targeting a Super User
+- The Admin Panel displays a "Super Admin" label instead of toggle buttons for Super Users
+
+### Dedicated Server vs Host & Play
+
+| | Dedicated Server | Host & Play |
+|--|-----------------|-------------|
+| Default admin | None — must assign manually | First player is auto-promoted to Super User + Admin |
+| Admin assignment | Console commands only | Automatic + Admin Panel UI |
+| On restart | All permissions reset | All permissions reset |
+
+### Typical Setup
+
+1. Start the dedicated server
+2. Players join — everyone starts as Listener
+3. Run `terra-namp-admin YourName` in the server console — you become Admin + Super User
+4. Use the Admin Panel (shield icon) in-game to promote other players
+5. Optionally run `terra-namp-superuser ModeratorName` to protect trusted moderators from demotion
