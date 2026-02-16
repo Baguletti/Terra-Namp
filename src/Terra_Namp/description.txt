@@ -1,28 +1,43 @@
-### Terra Namp — In-Game Music Player
+[h1]Terra Namp — Music Player for Terraria[/h1]
+Play music from YouTube or local files right inside the game. Listen together in multiplayer — and load up the soundpad with meme sounds for when your friend dies to another dart trap.
 
-Play your own music right inside Terraria. Replace the vanilla soundtrack with whatever you want.
+[img]https://files.catbox.moe/3bjvw3.gif[/img]
 
-**Download from YouTube**
-Paste a link, hit Download. The mod handles everything — yt-dlp, FFmpeg conversion, volume normalization. Multiple downloads at once with progress bars.
+[h2]Features[/h2]
 
-**Import local files**
-MP3, FLAC, WAV, OGG, M4A — any common audio format. Import entire folders at once.
+[h3]YouTube Download[/h3]
+Paste a link, click Download. Handles yt-dlp, loudness normalization, and conversion to MP3 automatically.
 
-**Multiplayer**
-One player picks a song — everyone hears it. Songs are transferred automatically. Prefetch system pre-loads upcoming tracks for seamless transitions. Admin panel lets the host control who can DJ.
+[h3]Playlist Download[/h3]
+Paste a YouTube playlist link — downloads all tracks into a folder named after the playlist. Shows overall progress and ETA.
 
-**Soundpad**
-Instantly play sound effects over the music. Separate volume control.
+[h3]Multiplayer Sync[/h3]
+One player picks a song — everyone hears it.
+[list]
+[*] [b]Auto-Transfer:[/b] Songs are sent to other players in the background.
+[*] [b]Prefetch:[/b] Upcoming tracks load in advance so there's no gap between songs.
+[*] [b]DJ Mode:[/b] Host controls who can change music.
+[/list]
 
-**Slowed + Reverb**
-Real DSP slowdown effect. Synced across multiplayer.
+[h3]Local Files[/h3]
+Import MP3, FLAC, WAV, OGG, M4A — single files or entire folders.
 
-**Fully customizable UI**
-- Accent color, background color, opacity, blur, corner radius
-- Real-time audio visualizer (bars or waveform)
-- Draggable panel with persistent position
-- Mini player mode
-- Search, folders, play modes (sequential / shuffle / loop)
+[h3]Slowed + Reverb[/h3]
+Real-time audio effect, synced across all players.
 
-**Requires:** SilkyUIFramework
-**Works on:** Windows, Linux, macOS
+[h3]Soundpad[/h3]
+Play sound effects over the music. Separate volume, draggable button grid.
+
+[h2]UI & Visualizer[/h2]
+[list]
+[*] [b]Visualizer:[/b] Bars or Waveform mode.
+[*] [b]Glassmorphism:[/b] Blur, opacity, colors, corner radius — all adjustable.
+[*] [b]Mini-Player:[/b] Compact mode.
+[*] [b]Draggable:[/b] Place the panel anywhere, position is saved.
+[/list]
+
+[h2]Links[/h2]
+[url=https://github.com/Baguletti/Terra-Namp]GitHub[/url]
+
+[b]Requires:[/b] SilkyUIFramework
+[b]Platforms:[/b] Windows, Linux, macOS

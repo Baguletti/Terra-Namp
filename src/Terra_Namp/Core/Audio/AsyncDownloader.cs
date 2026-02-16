@@ -25,10 +25,19 @@ namespace Terra_Namp.Core.Audio
         public string FailMessage;
         public string Uuid;
         public DateTime CompletedAt;
+
+        // Playlist fields
+        public bool IsPlaylist;
+        public int PlaylistTotal;
+        public int PlaylistCompleted;
+        public int PlaylistFailed;
+
         internal CancellationTokenSource CTS = new();
         internal long LastActivityTicks = DateTime.UtcNow.Ticks;
         internal long ExpectedBytes;
         internal double Duration;
+        internal Stopwatch PlaylistStopwatch;
+        internal float _trackProgress; // 0-1 for current track within playlist
 
         internal void ResetActivity() =>
             Interlocked.Exchange(ref LastActivityTicks, DateTime.UtcNow.Ticks);
@@ -50,6 +59,7 @@ namespace Terra_Namp.Core.Audio
 
         private const int InactivityTimeoutSeconds = 300;
         private const double CompletedDisplaySeconds = 5;
+        private const int MaxConsecutiveFailures = 5;
 
         public static IReadOnlyList<DownloadJob> GetJobs()
         {
@@ -103,6 +113,24 @@ namespace Terra_Namp.Core.Audio
             return job;
         }
 
+        public static DownloadJob StartPlaylistDownload(string url, Action<string> onTrackComplete, Action<string> onFail)
+        {
+            var job = new DownloadJob
+            {
+                Url = url,
+                Phase = "Starting...",
+                IsPlaylist = true,
+            };
+
+            lock (_lock)
+                _jobs.Add(job);
+
+            Task.Run(() => RunPlaylistJobAsync(job, onTrackComplete, onFail));
+            Task.Run(() => WatchdogAsync(job, onFail));
+
+            return job;
+        }
+
         private static async Task WatchdogAsync(DownloadJob job, Action<string> onFail)
         {
             while (!job.IsComplete && !job.IsFailed && !job.CTS.IsCancellationRequested)
@@ -122,6 +150,10 @@ namespace Terra_Namp.Core.Audio
             }
         }
 
+        // ────────────────────────────────────────────────────────────────
+        //  Single-track download (unchanged behavior)
+        // ────────────────────────────────────────────────────────────────
+
         private static async Task RunJobAsync(DownloadJob job, Action<string> onComplete, Action<string> onFail)
         {
             string path = Terra_Namp.CachePath;
@@ -140,7 +172,7 @@ namespace Terra_Namp.Core.Audio
                 job.ResetActivity();
                 job.Phase = "Fetching info...";
                 job.Progress = 0.05f;
-                var (title, author, expectedBytes, duration) = await GetVideoInfoAsync(job, ct);
+                var (title, author, expectedBytes, duration) = await GetVideoInfoAsync(job.Url, job, ct);
                 job.Title = title;
                 job.ExpectedBytes = expectedBytes;
                 job.Duration = duration;
@@ -152,7 +184,7 @@ namespace Terra_Namp.Core.Audio
                 FFmpeg.EnsureStandardNameExists();
                 string mp3Path = Path.Combine(path, $"{uuid}.mp3");
                 Terra_Namp.Instance?.Logger.Info($"[DL] Starting download: uuid={uuid}, path={mp3Path}");
-                await DownloadAudioAsync(job, mp3Path, uuid, ct);
+                await DownloadAudioAsync(job.Url, job, mp3Path, uuid, ct);
 
                 bool exists = File.Exists(mp3Path);
                 long finalSize = exists ? new FileInfo(mp3Path).Length : 0;
@@ -204,10 +236,230 @@ namespace Terra_Namp.Core.Audio
             }
         }
 
-        private static async Task<(string title, string author, long expectedBytes, double duration)> GetVideoInfoAsync(DownloadJob job, CancellationToken ct)
+        // ────────────────────────────────────────────────────────────────
+        //  Playlist download
+        // ────────────────────────────────────────────────────────────────
+
+        private readonly struct PlaylistEntry
+        {
+            public readonly string Id;
+            public readonly string Title;
+            public readonly double Duration;
+
+            public PlaylistEntry(string id, string title, double duration)
+            {
+                Id = id;
+                Title = title;
+                Duration = duration;
+            }
+        }
+
+        private static async Task RunPlaylistJobAsync(DownloadJob job, Action<string> onTrackComplete, Action<string> onFail)
+        {
+            string path = Terra_Namp.CachePath;
+            var ct = job.CTS.Token;
+
+            try
+            {
+                // 1. Ensure yt-dlp installed
+                job.ResetActivity();
+                job.Phase = "Checking yt-dlp...";
+                job.Progress = 0.01f;
+                await YtDlp.EnsureInstalledAsync(ct);
+
+                // 2. Fetch playlist metadata
+                job.ResetActivity();
+                job.Phase = "Fetching playlist...";
+                job.Progress = 0.02f;
+                var (playlistTitle, entries) = await GetPlaylistInfoAsync(job.Url, job, ct);
+
+                job.Title = playlistTitle;
+                job.PlaylistTotal = entries.Count;
+                job.PlaylistStopwatch = Stopwatch.StartNew();
+
+                var log = Terra_Namp.Instance?.Logger;
+                log?.Info($"[PL] Playlist \"{playlistTitle}\": {entries.Count} tracks");
+
+                FFmpeg.EnsureStandardNameExists();
+
+                int consecutiveFailures = 0;
+
+                // 3. Download each track sequentially
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    var entry = entries[i];
+                    string videoUrl = $"https://www.youtube.com/watch?v={entry.Id}";
+                    string uuid = Guid.NewGuid().ToString();
+
+                    job.Phase = $"[{i + 1}/{entries.Count}] {entry.Title}";
+                    job._trackProgress = 0f;
+                    job.ExpectedBytes = 0;
+                    job.Duration = entry.Duration;
+                    job.ResetActivity();
+
+                    log?.Info($"[PL] Track {i + 1}/{entries.Count}: \"{entry.Title}\" ({entry.Id})");
+
+                    try
+                    {
+                        // Get track info (sets ExpectedBytes, Duration for monitor)
+                        var (title, author, expectedBytes, duration) = await GetVideoInfoAsync(videoUrl, job, ct);
+                        job.ExpectedBytes = expectedBytes;
+                        job.Duration = duration;
+
+                        // Download + convert
+                        string mp3Path = Path.Combine(path, $"{uuid}.mp3");
+                        await DownloadAudioAsync(videoUrl, job, mp3Path, uuid, ct);
+
+                        if (!File.Exists(mp3Path))
+                            throw new FileNotFoundException("yt-dlp did not produce an output file.");
+
+                        // Hash + metadata (folder = playlist title)
+                        byte[] hashBytes = ContentHash.ComputeHash(mp3Path);
+                        string hashHex = ContentHash.HashToHex(hashBytes);
+
+                        // Dedup check
+                        if (SongRegistry.Instance?.HasHash(hashHex) == true)
+                        {
+                            log?.Info($"[PL] Duplicate skipped: \"{title}\" (hash={hashHex[..8]}..)");
+                            Cleanup(path, uuid);
+                        }
+                        else
+                        {
+                            string titleFile = Path.Combine(path, $"{uuid}.txt");
+                            File.WriteAllText(titleFile,
+                                $"{title}{Environment.NewLine}{author}{Environment.NewLine}{hashHex}{Environment.NewLine}{playlistTitle}");
+
+                            SongRegistry.Instance?.RegisterSong(uuid, hashHex);
+                            onTrackComplete?.Invoke(uuid);
+                        }
+
+                        job.PlaylistCompleted++;
+                        consecutiveFailures = 0;
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        log?.Warn($"[PL] Track {i + 1} failed: {ex.Message}");
+                        Cleanup(path, uuid);
+                        job.PlaylistFailed++;
+                        consecutiveFailures++;
+
+                        if (consecutiveFailures >= MaxConsecutiveFailures)
+                            throw new Exception($"Aborted: {MaxConsecutiveFailures} consecutive track failures");
+                    }
+
+                    // Update playlist-level progress and ETA
+                    int processed = job.PlaylistCompleted + job.PlaylistFailed;
+                    float newProgress = (float)processed / job.PlaylistTotal;
+                    if (newProgress > job.Progress)
+                        job.Progress = newProgress;
+
+                    if (processed > 0 && job.PlaylistStopwatch != null)
+                    {
+                        double avgSecs = job.PlaylistStopwatch.Elapsed.TotalSeconds / processed;
+                        int remaining = job.PlaylistTotal - processed;
+                        int etaSecs = (int)(avgSecs * remaining);
+                        job.ETA = etaSecs > 0 ? FormatTime(etaSecs) : null;
+                    }
+                }
+
+                // Done
+                string summary = job.PlaylistFailed > 0
+                    ? $"Done! ({job.PlaylistFailed} failed)"
+                    : "Done!";
+                job.Progress = 1f;
+                job.Phase = summary;
+                job.Speed = null;
+                job.ETA = null;
+                job.IsComplete = true;
+                job.CompletedAt = DateTime.UtcNow;
+            }
+            catch (OperationCanceledException)
+            {
+                if (!job.IsFailed)
+                {
+                    job.IsFailed = true;
+                    job.FailMessage = "Cancelled";
+                    job.Phase = "Cancelled";
+                    job.CompletedAt = DateTime.UtcNow;
+                }
+            }
+            catch (Exception ex)
+            {
+                job.IsFailed = true;
+                job.FailMessage = ex.Message;
+                job.Phase = "Failed";
+                job.CompletedAt = DateTime.UtcNow;
+                onFail?.Invoke(ex.Message);
+            }
+        }
+
+        private static async Task<(string title, List<PlaylistEntry> entries)> GetPlaylistInfoAsync(
+            string url, DownloadJob job, CancellationToken ct)
+        {
+            string args = $"--flat-playlist -J --no-download \"{url}\"";
+            using var process = YtDlp.Run(args);
+
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+
+            try
+            {
+                await process.WaitForExitAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
+            job.ResetActivity();
+
+            string output = await outputTask;
+
+            if (process.ExitCode != 0)
+            {
+                string error = await errorTask;
+                throw new Exception($"yt-dlp playlist info failed: {error}");
+            }
+
+            using var doc = JsonDocument.Parse(output);
+            var root = doc.RootElement;
+
+            string title = root.TryGetProperty("title", out var t) ? t.GetString() : "Playlist";
+
+            var entries = new List<PlaylistEntry>();
+            if (root.TryGetProperty("entries", out var entriesEl) && entriesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in entriesEl.EnumerateArray())
+                {
+                    string id = entry.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                    if (string.IsNullOrEmpty(id)) continue;
+
+                    string entryTitle = entry.TryGetProperty("title", out var et) ? et.GetString() : "Unknown";
+                    double duration = entry.TryGetProperty("duration", out var d) && d.ValueKind == JsonValueKind.Number
+                        ? d.GetDouble() : 0;
+
+                    entries.Add(new PlaylistEntry(id, entryTitle, duration));
+                }
+            }
+
+            if (entries.Count == 0)
+                throw new Exception("Playlist is empty or could not be parsed.");
+
+            return (title, entries);
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Shared download helpers
+        // ────────────────────────────────────────────────────────────────
+
+        private static async Task<(string title, string author, long expectedBytes, double duration)> GetVideoInfoAsync(
+            string url, DownloadJob job, CancellationToken ct)
         {
             // -x: select audio format so filesize_approx reflects audio size, not video
-            string args = $"-j -x --audio-format mp3 --no-playlist \"{job.Url}\"";
+            string args = $"-j -x --audio-format mp3 --no-playlist \"{url}\"";
             using var process = YtDlp.Run(args);
 
             var outputTask = process.StandardOutput.ReadToEndAsync();
@@ -261,14 +513,14 @@ namespace Terra_Namp.Core.Audio
             return (title, author, expectedBytes, duration);
         }
 
-        private static async Task DownloadAudioAsync(DownloadJob job, string outputPath, string uuid, CancellationToken ct)
+        private static async Task DownloadAudioAsync(string url, DownloadJob job, string outputPath, string uuid, CancellationToken ct)
         {
             string ffmpegDir = Terra_Namp.CachePath;
             string args = $"-x --audio-format mp3 --audio-quality 0 " +
                           $"--postprocessor-args \"ffmpeg:-af loudnorm\" " +
                           $"--ffmpeg-location \"{ffmpegDir}\" " +
                           $"--no-playlist " +
-                          $"-o \"{outputPath}\" \"{job.Url}\"";
+                          $"-o \"{outputPath}\" \"{url}\"";
 
             using var process = YtDlp.Run(args);
 
@@ -352,7 +604,8 @@ namespace Terra_Namp.Core.Audio
                     // Track the relevant size for speed calculation
                     long trackSize = inConversion ? mp3Size : downloadSize;
 
-                    // Calculate speed
+                    // Calculate speed and per-track ETA
+                    int currentTrackEtaSecs = 0;
                     long nowMs = sw.ElapsedMilliseconds;
                     if (trackSize > lastTrackSize && lastMs > 0 && nowMs > lastMs)
                     {
@@ -363,40 +616,89 @@ namespace Terra_Namp.Core.Audio
                         if (expected > 0 && speed > 0)
                         {
                             long remaining = Math.Max(0, expected - trackSize);
-                            int etaSecs = (int)(remaining / speed);
-                            job.ETA = etaSecs > 0 ? FormatTime(etaSecs) : null;
+                            currentTrackEtaSecs = (int)(remaining / speed);
                         }
                     }
                     lastTrackSize = trackSize;
                     lastMs = nowMs;
 
-                    // Update progress
-                    if (inConversion && estimatedMp3Size > 0)
+                    // ── Update ETA ──
+                    if (job.IsPlaylist && job.PlaylistStopwatch != null)
                     {
-                        // Conversion phase: 80% - 95%
-                        float pct = Math.Min((float)mp3Size / estimatedMp3Size, 1f);
-                        float mapped = 0.80f + pct * 0.15f;
-                        if (mapped > job.Progress)
+                        // Playlist ETA: current track remaining + avg time * remaining full tracks
+                        int playlistEtaSecs = currentTrackEtaSecs;
+                        int processed = job.PlaylistCompleted + job.PlaylistFailed;
+                        if (processed > 0)
                         {
-                            job.Progress = mapped;
-                            job.Phase = "Converting...";
+                            double avgTrackSecs = job.PlaylistStopwatch.Elapsed.TotalSeconds / processed;
+                            int remainingFullTracks = Math.Max(0, job.PlaylistTotal - processed - 1);
+                            playlistEtaSecs += (int)(avgTrackSecs * remainingFullTracks);
                         }
+                        job.ETA = playlistEtaSecs > 0 ? FormatTime(playlistEtaSecs) : null;
                     }
-                    else if (!inConversion && job.ExpectedBytes > 0)
+                    else
                     {
-                        // Download phase: 10% - 80%
-                        float pct = Math.Min((float)downloadSize / job.ExpectedBytes, 1f);
-                        float mapped = 0.10f + pct * 0.70f;
-                        if (mapped > job.Progress)
+                        job.ETA = currentTrackEtaSecs > 0 ? FormatTime(currentTrackEtaSecs) : null;
+                    }
+
+                    // ── Update progress ──
+                    if (job.IsPlaylist)
+                    {
+                        // Compute per-track progress (0-1) and blend into playlist progress
+                        float trackPct;
+                        if (inConversion && estimatedMp3Size > 0)
                         {
-                            job.Progress = mapped;
+                            float pct = Math.Min((float)mp3Size / estimatedMp3Size, 1f);
+                            trackPct = 0.82f + pct * 0.18f;
+                        }
+                        else if (!inConversion && job.ExpectedBytes > 0)
+                        {
+                            float pct = Math.Min((float)downloadSize / job.ExpectedBytes, 1f);
+                            trackPct = pct * 0.82f;
+                        }
+                        else
+                        {
+                            trackPct = 0.05f;
+                        }
+
+                        job._trackProgress = trackPct;
+
+                        float baseProg = (float)(job.PlaylistCompleted + job.PlaylistFailed) / job.PlaylistTotal;
+                        float trackContrib = trackPct / job.PlaylistTotal;
+                        float newProgress = baseProg + trackContrib;
+                        if (newProgress > job.Progress)
+                            job.Progress = newProgress;
+
+                        // Don't override Phase — playlist loop manages "[N/M] Title"
+                    }
+                    else
+                    {
+                        // Single-track progress (original behavior)
+                        if (inConversion && estimatedMp3Size > 0)
+                        {
+                            float pct = Math.Min((float)mp3Size / estimatedMp3Size, 1f);
+                            float mapped = 0.80f + pct * 0.15f;
+                            if (mapped > job.Progress)
+                            {
+                                job.Progress = mapped;
+                                job.Phase = "Converting...";
+                            }
+                        }
+                        else if (!inConversion && job.ExpectedBytes > 0)
+                        {
+                            float pct = Math.Min((float)downloadSize / job.ExpectedBytes, 1f);
+                            float mapped = 0.10f + pct * 0.70f;
+                            if (mapped > job.Progress)
+                            {
+                                job.Progress = mapped;
+                                job.Phase = "Downloading...";
+                            }
+                        }
+                        else if (job.Progress < 0.15f)
+                        {
+                            job.Progress = 0.15f;
                             job.Phase = "Downloading...";
                         }
-                    }
-                    else if (job.Progress < 0.15f)
-                    {
-                        job.Progress = 0.15f;
-                        job.Phase = "Downloading...";
                     }
                 }
 
@@ -426,6 +728,10 @@ namespace Terra_Namp.Core.Audio
             if (process.ExitCode != 0)
                 throw new Exception($"yt-dlp download failed (exit code {process.ExitCode})");
         }
+
+        // ────────────────────────────────────────────────────────────────
+        //  Utilities
+        // ────────────────────────────────────────────────────────────────
 
         private static string FormatBytes(double bytes)
         {

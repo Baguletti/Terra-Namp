@@ -350,14 +350,17 @@ public class AddTracksPanel : SmartUIElement
 
     private static string FormatInfoText(DownloadJob job)
     {
-        int pct = (int)(job.Progress * 100);
-
         if (job.IsFailed)
             return "Failed";
         if (job.IsComplete)
-            return "Done!";
+            return job.IsPlaylist ? $"Done! {job.PlaylistCompleted}/{job.PlaylistTotal}" : "Done!";
 
+        int pct = (int)(job.Progress * 100);
         string info = $"{pct}%";
+
+        if (job.IsPlaylist)
+            info = $"{job.PlaylistCompleted}/{job.PlaylistTotal} {info}";
+
         if (job.Speed != null)
             info += $" {job.Speed}";
         if (job.ETA != null)
@@ -381,23 +384,40 @@ public class AddTracksPanel : SmartUIElement
 
     private void OnDownloadClick()
     {
-        if (string.IsNullOrEmpty(urlField.CurrentValue))
+        string url = urlField.CurrentValue?.Trim();
+        if (string.IsNullOrEmpty(url))
             return;
 
-        AsyncDownloader.StartDownload(
-            urlField.CurrentValue.Trim(),
-            uuid =>
+        Action<string> refreshAction = _ =>
+        {
+            Main.QueueMainThreadAction(() =>
             {
-                Main.QueueMainThreadAction(() =>
-                {
-                    TerraUILoader.GetUIState<TerraState>()?.MainPanel?.RefreshSongList();
-                    RefreshSongList();
-                });
-            },
-            message => { }
-        );
+                TerraUILoader.GetUIState<TerraState>()?.MainPanel?.RefreshSongList();
+                RefreshSongList();
+            });
+        };
+
+        if (IsLikelyPlaylist(url))
+        {
+            AsyncDownloader.StartPlaylistDownload(url, refreshAction, message => { });
+        }
+        else
+        {
+            AsyncDownloader.StartDownload(url, refreshAction, message => { });
+        }
 
         urlField.CurrentValue = "";
+    }
+
+    private static bool IsLikelyPlaylist(string url)
+    {
+        // Explicit YouTube playlist page: youtube.com/playlist?list=...
+        if (url.Contains("/playlist?", StringComparison.OrdinalIgnoreCase))
+            return true;
+        // YouTube Music playlist
+        if (url.Contains("music.youtube.com/playlist", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
     }
 
     private void OnBrowseClick()
