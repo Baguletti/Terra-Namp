@@ -222,6 +222,16 @@ public class PlaybackController : IDisposable
         audioTrack.SeekToProgress(progress);
     }
 
+    /// <summary>
+    /// Seeks to position and immediately pauses — no audio starts, no fade race.
+    /// Use when restoring a track that was paused before an event (boss/death).
+    /// </summary>
+    public void SeekAndPauseFromNetwork(float progress)
+    {
+        NetLogger.Info($"SeekAndPauseFromNetwork: \"{Name}\" progress={progress:F3}");
+        audioTrack.SeekAndPause(progress);
+    }
+
     public void ApplySlowedReverbFromNetwork(bool enabled)
     {
         NetLogger.Info($"ApplySlowedReverbFromNetwork: \"{Name}\" enabled={enabled}");

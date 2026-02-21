@@ -43,6 +43,22 @@ public class ServerJukeboxState : ModSystem
     public long TotalPausedTicks { get; set; }
     public bool SlowedReverbEnabled { get; set; }
 
+    // Boss/death track state (server stores these so it can trigger playback on events)
+    public byte[] BossMusicHash { get; set; }
+    public string BossMusicTitle { get; set; } = "";
+    public string BossMusicAuthor { get; set; } = "";
+    public byte[] DeathMusicHash { get; set; }
+    public string DeathMusicTitle { get; set; } = "";
+    public string DeathMusicAuthor { get; set; } = "";
+
+    // Boss/death soundpad UUID (server stores, broadcasts PlaySoundpadSound on event)
+    public string BossSoundpadUuid { get; set; } = "";
+    public string DeathSoundpadUuid { get; set; } = "";
+
+    // Kept for external query (e.g. packet handlers). Authoritative state lives in JukeboxEventMachine.
+    public bool WasAnyBossAlive { get; set; }
+    public int DeathMusicTimer { get; set; }
+
     public Dictionary<int, PlayerPermissions> Permissions { get; } = new();
     public HashSet<int> SuperUsers { get; } = new();
 

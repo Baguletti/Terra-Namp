@@ -1,7 +1,9 @@
 [h1]Terra Namp — Music Player for Terraria[/h1]
 Play music from YouTube or local files right inside the game. Listen together in multiplayer — and load up the soundpad with meme sounds for when your friend dies to another dart trap.
 
-[img]https://files.catbox.moe/3bjvw3.gif[/img]
+[img]https://raw.githubusercontent.com/Baguletti/Terra-Namp/main/assets/1.gif[/img]
+[img]https://raw.githubusercontent.com/Baguletti/Terra-Namp/main/assets/2.gif[/img]
+[img]https://raw.githubusercontent.com/Baguletti/Terra-Namp/main/assets/3.gif[/img]
 
 [h2]Features[/h2]
 
@@ -41,3 +43,11 @@ Play sound effects over the music. Separate volume, draggable button grid.
 
 [b]Requires:[/b] SilkyUIFramework
 [b]Platforms:[/b] Windows, Linux, macOS
+
+[h2]Changelog[/h2]
+
+[h3]1.1.4[/h3]
+[list]
+[*] [b]Refresh button:[/b] Return to vanilla music
+[*] [b]Event sounds:[/b] Assign custom tracks and soundpad sounds to boss and death events in settings.
+[/list]

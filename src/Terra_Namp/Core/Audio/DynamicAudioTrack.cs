@@ -216,28 +216,49 @@ namespace Terra_Namp.Core.Audio
         /// </summary>
         public void UpdateVolumeFade(float deltaTime)
         {
+            // Auto-pause check BEFORE early return: handles the case where PlaySmooth()
+            // sets current=0/target=1 and PauseSmooth() immediately overrides target back to 0.
+            // Without this, current==target==0 triggers the early return and Pause() is never called,
+            // leaving the track in IsPlaying=true / volume=0 deadlock forever.
+            if (targetVolumeFade == 0f && currentVolumeFade <= 0.001f && IsPlaying)
+            {
+                currentVolumeFade = 0f;
+                _soundEffectInstance.Volume = 0f;
+                Pause();
+                return;
+            }
+
             if (Math.Abs(currentVolumeFade - targetVolumeFade) < 0.001f)
                 return;
 
             float fadeSpeed = 1f / FadeDuration; // 1/0.3 = ~3.33 per second
             if (currentVolumeFade < targetVolumeFade)
-            {
                 currentVolumeFade = Math.Min(currentVolumeFade + fadeSpeed * deltaTime, targetVolumeFade);
-            }
             else
-            {
                 currentVolumeFade = Math.Max(currentVolumeFade - fadeSpeed * deltaTime, targetVolumeFade);
-            }
 
             // S-curve: 0.5 - 0.5*cos(t*PI) maps linear t to smooth curve with zero derivative at 0 and 1
             float smoothed = 0.5f - 0.5f * MathF.Cos(currentVolumeFade * MathF.PI);
             _soundEffectInstance.Volume = lastUserVolume * smoothed;
+        }
 
-            // Auto-pause when fade-out completes
-            if (targetVolumeFade == 0f && currentVolumeFade == 0f && IsPlaying)
-            {
+        /// <summary>
+        /// Atomically seeks to a position and leaves the track in Paused state.
+        /// Avoids the PlaySmooth→PauseSmooth race that causes the deadlock.
+        /// XNA requires Play() before Pause() to reach the Paused state.
+        /// </summary>
+        public void SeekAndPause(float progress)
+        {
+            SeekToProgress(progress);
+            // Silence before any audio frame can be submitted
+            currentVolumeFade = 0f;
+            targetVolumeFade = 0f;
+            _soundEffectInstance.Volume = 0f;
+            // XNA: can only Pause a Playing instance; Play() submits no audio since volume=0
+            if (!IsPlaying && !IsPaused)
+                Play();
+            if (IsPlaying)
                 Pause();
-            }
         }
 
 

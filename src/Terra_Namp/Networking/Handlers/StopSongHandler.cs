@@ -31,10 +31,14 @@ public static class StopSongHandler
         else if (Main.netMode == NetmodeID.MultiplayerClient)
         {
             NetLogger.Packet($"StopSong received from player {sender}");
+            bool isEventStop = sender == 255;
             Main.QueueMainThreadAction(() =>
             {
                 var panel = TerraUILoader.GetUIState<TerraState>()?.MainPanel;
-                panel?.StopCurrentSongFromNetwork();
+                if (isEventStop)
+                    panel?.RestorePreEventState();
+                else
+                    panel?.StopCurrentSongFromNetwork();
             });
         }
     }

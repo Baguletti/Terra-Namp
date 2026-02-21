@@ -1,17 +1,7 @@
 
-Поддержка lossless форматов (FLAC, OGG, WAV) без конвертации в MP3:
-  Сейчас DynamicAudioTrack использует MP3Sharp — только MP3.
-  Вариант 1: Заменить MP3Sharp на NVorbis/NAudio — декодируют FLAC/OGG/WAV в PCM, SoundEffectInstance принимает любой PCM.
-  Вариант 2: FFmpeg как декодер в реальном времени (ffmpeg -i input.flac -f s16le -ar 44100 -ac 2 pipe:1), читать PCM из stdout.
-  Вариант 1 чище, вариант 2 универсальнее.
+
 
 Импорт плейлистов из YouTube Music и Spotify (через yt-dlp):
-  YouTube Music:
-    - UI для ввода URL плейлиста YouTube Music
-    - yt-dlp --flat-playlist --print id,title,channel — получить список треков
-    - Очередь скачивания каждого трека через существующий AsyncDownloader
-    - Опционально: --cookies-from-browser для приватных плейлистов
-    - Зависимости: уже есть (yt-dlp), минимум новой логики
   Spotify:
     - OAuth2 авторизация (открыть браузер → логин → токен)
     - Spotify Web API: получить список треков из плейлиста (название + артист)

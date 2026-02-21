@@ -1,6 +1,16 @@
 # Changelog
 
-## v1.1
+## v1.1.3
+
+### Text Input
+- All text fields now support cursor positioning with arrow keys, Home/End, Delete
+- Click to place cursor at any position in the text
+- Key repeat when holding arrow keys (0.3s delay, then fast scroll)
+- Emoji-safe cursor navigation (surrogate pairs handled correctly)
+
+### Soundpad
+- Fixed garbled unicode tooltip when hovering sound pads
+- Fixed crash when deleting a sound that is currently playing
 
 ### Playlist Download
 - Download entire YouTube playlists by pasting the playlist URL

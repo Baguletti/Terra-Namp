@@ -11,9 +11,13 @@ public class SoundpadDataStore : PersistentDataStore
     private const string SoundUuidPrefix = "Soundpad:Uuid:";
     private const string SoundNamePrefix = "Soundpad:Name:";
     private const string VolumeLevelTag = "Soundpad:VolumeLevel";
+    // Boss/death sound UUIDs intentionally NOT persisted — session-only
 
     public List<SoundEntry> Sounds { get; set; } = new();
-    public float VolumeLevel { get; set; } = 0.5f; // Default 50%
+    public float VolumeLevel { get; set; } = 0.5f;
+
+    public string BossSoundUuid { get; set; } = "";
+    public string DeathSoundUuid { get; set; } = "";
 
     public override string FileName => "soundpad_data.dat";
 
@@ -28,6 +32,8 @@ public class SoundpadDataStore : PersistentDataStore
             VolumeLevel = tag.GetFloat(VolumeLevelTag);
         else
             VolumeLevel = 0.5f; // Default 50%
+
+        // BossSoundUuid / DeathSoundUuid not loaded — session-only
 
         if (!tag.ContainsKey(SoundCountTag))
             return;
@@ -52,6 +58,7 @@ public class SoundpadDataStore : PersistentDataStore
     public override void SaveGlobal(TagCompound tag)
     {
         tag[VolumeLevelTag] = VolumeLevel;
+        // BossSoundUuid / DeathSoundUuid not saved — session-only
         tag[SoundCountTag] = Sounds.Count;
 
         for (int i = 0; i < Sounds.Count; i++)
@@ -73,8 +80,15 @@ public class SoundpadDataStore : PersistentDataStore
         ForceSave();
 
         string filePath = Path.Combine(SoundpadCachePath, $"{uuid}.mp3");
-        if (File.Exists(filePath))
-            File.Delete(filePath);
+        try
+        {
+            if (File.Exists(filePath))
+                File.Delete(filePath);
+        }
+        catch (IOException)
+        {
+            // File locked by playback — ignore, orphan will be overwritten or cleaned up
+        }
     }
 
     public class SoundEntry

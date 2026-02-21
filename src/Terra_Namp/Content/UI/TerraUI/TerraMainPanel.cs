@@ -35,6 +35,12 @@ public class TerraMainPanel : DraggableUIElement
     private string pendingTrackUuid = null;
     private bool pendingTrackForced = false;
     private bool isTrackSwitching = false;
+    private string pendingDisplayUuid = null; // shown in UI immediately during fade-out
+
+    // State saved before server-triggered event music (boss/death)
+    private string preEventSongUuid = null;
+    private float preEventSongProgress = 0f;
+    private bool preEventSongWasPaused = false;
 
     private TabBar tabBar;
     private UIElement playerTab;
@@ -43,6 +49,7 @@ public class TerraMainPanel : DraggableUIElement
     private SoundpadPanel soundpadTab;
 
     private SoundpadPlaybackController soundpadPlayback;
+    public SoundpadPlaybackController SoundpadPlayback => soundpadPlayback;
     private bool soundpadControllerInitialized = false;
 
     private SeekBar seekBar;
@@ -53,6 +60,7 @@ public class TerraMainPanel : DraggableUIElement
     private PlayPauseButton playPauseButton;
     private IconButton settingsButton;
     private IconButton shieldButton;
+    private IconButton stopButton;
     private IconButton slowedReverbBtn;
     private AdminPanel adminTab;
     private bool showingSettings;
@@ -167,6 +175,21 @@ public class TerraMainPanel : DraggableUIElement
         shieldButton.OnLeftClick += (evt, args) => ToggleAdmin();
         Append(shieldButton);
 
+        // --- Stop button (restore vanilla music, hidden when no song is active) ---
+        stopButton = new IconButton("Terra_Namp/Assets/UI/Icons/Refresh", iconPadding: 4);
+        stopButton.Left.Set(-9999, 0);
+        stopButton.Top.Set(3, 0);
+        stopButton.Width.Set(settingsBtnSize, 0);
+        stopButton.Height.Set(settingsBtnSize, 0);
+        stopButton.OnLeftClick += (evt, args) =>
+        {
+            if (Main.netMode == NetmodeID.MultiplayerClient
+                && !ClientPermissionCache.GetLocalPermissions().CanStop)
+                return;
+            StopCurrentSong();
+        };
+        Append(stopButton);
+
         // --- Settings button (top-right corner of title bar) ---
         settingsButton = new IconButton("Terra_Namp/Assets/UI/Icons/Settings", iconPadding: 4);
         settingsButton.Left.Set(PanelWidth - settingsBtnSize - 3, 0);
@@ -272,8 +295,10 @@ public class TerraMainPanel : DraggableUIElement
         songList.Top.Set(y, 0);
         songList.Width.Set(contentWidth, 0);
         songList.Height.Set(songListHeight, 0);
-        songList.AllowDelete = false;
         songList.OnSongSelected += OnSongSelected;
+        songList.OnSongDeleted += OnSongDeleted;
+        songList.OnSetAsBossMusic += uuid => SetSpecialTrack(uuid, isDeathMusic: false);
+        songList.OnSetAsDeathMusic += uuid => SetSpecialTrack(uuid, isDeathMusic: true);
         playerTab.Append(songList);
     }
 
@@ -478,21 +503,27 @@ public class TerraMainPanel : DraggableUIElement
             settingsButton.IsActive = showingSettings;
 
         // Shield button visibility: only in multiplayer + admin
+        // Stop button visibility: only when a song is loaded (paused or playing)
         if (shieldButton != null)
         {
             bool shouldShowShield = Main.netMode == NetmodeID.MultiplayerClient
                 && ClientPermissionCache.IsLocalPlayerAdmin();
+            bool canStop = Main.netMode != NetmodeID.MultiplayerClient
+                || ClientPermissionCache.GetLocalPermissions().CanStop;
+            bool shouldShowStop = ActiveSong != null && canStop;
 
-            int settingsBtnSize2 = 24;
+            int s = 24;
+            // Layout from right: [Settings(313)] [Shield(286, optional)] [Stop(optional)]
+            // Stop sits to the left of Shield (if visible) or at Shield's slot otherwise
             if (shouldShowShield)
             {
-                // Show at correct position
-                shieldButton.Left.Set(PanelWidth - settingsBtnSize2 * 2 - 6, 0);
+                shieldButton.Left.Set(PanelWidth - s * 2 - 6, 0);
+                stopButton?.Left.Set(PanelWidth - s * 3 - 9, 0);
             }
             else
             {
-                // Hide offscreen
                 shieldButton.Left.Set(-9999, 0);
+                stopButton?.Left.Set(PanelWidth - s * 2 - 6, 0);
 
                 // Close admin panel if it was showing
                 if (showingAdmin)
@@ -549,6 +580,9 @@ public class TerraMainPanel : DraggableUIElement
 
     public override void DraggableUpdate(GameTime gameTime)
     {
+        // Always update soundpad playback — soundpadTab may be removed from tree when another tab is active
+        soundpadPlayback?.Update();
+
         // Lazy initialization of soundpad controller in popup (in case popup state was created after main panel)
         if (!soundpadControllerInitialized && soundpadPlayback != null)
         {
@@ -588,6 +622,16 @@ public class TerraMainPanel : DraggableUIElement
     }
 
     // --- Public API (used by network handlers and TerraTrackUpdaterSystem) ---
+
+    /// <summary>
+    /// Play a song locally only — no network sync, no permission check.
+    /// Used for boss/death music that is personal to each player.
+    /// </summary>
+    public void BeginPlayingSongLocalOnly(string uuid)
+    {
+        NetLogger.Info($"[BeginPlayingSongLocalOnly] uuid={uuid[..8]}..");
+        BeginPlayingSongLocal(uuid, forced: false);
+    }
 
     public void BeginPlayingSong(string uuid, bool forced = false)
     {
@@ -656,6 +700,70 @@ public class TerraMainPanel : DraggableUIElement
         }
     }
 
+    /// <summary>
+    /// Called when server broadcasts event music (boss/death). Saves current player state
+    /// so it can be restored when the event ends (RestorePreEventState).
+    /// </summary>
+    public void BeginPlayingEventSong(string uuid, bool forced)
+    {
+        NetLogger.Info($"BeginPlayingEventSong: uuid={uuid[..8]}.. forced={forced}");
+
+        if (ActiveSong != null)
+        {
+            preEventSongUuid = ActiveSong.Uuid;
+            preEventSongProgress = ActiveSong.Progress;
+            preEventSongWasPaused = ActiveSong.IsPaused;
+            NetLogger.Info($"BeginPlayingEventSong: saved pre-event state uuid={preEventSongUuid[..8]}.. progress={preEventSongProgress:F3} paused={preEventSongWasPaused}");
+        }
+        else
+        {
+            preEventSongUuid = null;
+            preEventSongProgress = 0f;
+            preEventSongWasPaused = false;
+        }
+
+        BeginPlayingSongLocal(uuid, forced);
+    }
+
+    /// <summary>
+    /// Called when server-triggered event music ends. Restores the player state that was
+    /// active before the event, or fully stops if nothing was playing.
+    /// </summary>
+    public void RestorePreEventState()
+    {
+        NetLogger.Info($"RestorePreEventState: preEventSongUuid={preEventSongUuid ?? "null"}");
+
+        if (preEventSongUuid != null)
+        {
+            string restoreUuid = preEventSongUuid;
+            float restoreProgress = preEventSongProgress;
+            bool restorePaused = preEventSongWasPaused;
+
+            preEventSongUuid = null;
+
+            // Start the track (may fade out boss music first if it's still playing)
+            BeginPlayingSongLocal(restoreUuid, forced: false);
+
+            // Seek and pause state applied in UpdateActiveSong once the target track starts.
+            // Works for both paths: fade-out (isTrackSwitching) and immediate start (was paused by soundpad).
+            pendingRestoreForUuid = restoreUuid;
+            pendingRestoreProgress = restoreProgress;
+            pendingRestorePaused = restorePaused;
+            hasPendingRestore = true;
+        }
+        else
+        {
+            // Nothing was playing before → just stop
+            preEventSongUuid = null;
+            StopCurrentSongLocal();
+        }
+    }
+
+    private bool hasPendingRestore = false;
+    private string pendingRestoreForUuid = null;
+    private float pendingRestoreProgress = 0f;
+    private bool pendingRestorePaused = false;
+
     public void BeginPlayingSongFromNetwork(string uuid, bool forced)
     {
         NetLogger.Info($"BeginPlayingSongFromNetwork: uuid={uuid[..8]}.. forced={forced}");
@@ -686,6 +794,9 @@ public class TerraMainPanel : DraggableUIElement
             pendingTrackForced = forced;
             isTrackSwitching = true;
             ActiveSong.PauseFromNetwork(); // Triggers fade-out
+            // Update UI immediately — no reason to wait for the fade to finish
+            pendingDisplayUuid = uuid;
+            RefreshSongList();
         }
         else
         {
@@ -731,6 +842,7 @@ public class TerraMainPanel : DraggableUIElement
         {
             isTrackSwitching = false;
             pendingTrackUuid = null;
+            pendingDisplayUuid = null;
         }
 
         // Fade out before stopping
@@ -778,9 +890,34 @@ public class TerraMainPanel : DraggableUIElement
                 ActiveSong = null;
             }
 
+            pendingDisplayUuid = null;
             RefreshSongList();
             isTrackSwitching = false;
             pendingTrackUuid = null;
+
+            // Apply restore after fade-out completes (isTrackSwitching path)
+            if (hasPendingRestore && ActiveSong != null && ActiveSong.Uuid == pendingRestoreForUuid)
+            {
+                hasPendingRestore = false;
+                pendingRestoreForUuid = null;
+                if (pendingRestorePaused)
+                    ActiveSong.SeekAndPauseFromNetwork(pendingRestoreProgress);
+                else if (pendingRestoreProgress > 0f)
+                    ActiveSong.SeekFromNetwork(pendingRestoreProgress);
+            }
+        }
+
+        // Apply restore for immediate-start path: boss music was paused by soundpad when
+        // RestorePreEventState was called, so BeginPlayingSongLocal started without fade-out.
+        if (hasPendingRestore && ActiveSong != null && !isTrackSwitching &&
+            ActiveSong.Uuid == pendingRestoreForUuid && ActiveSong.IsPlaying)
+        {
+            hasPendingRestore = false;
+            pendingRestoreForUuid = null;
+            if (pendingRestorePaused)
+                ActiveSong.SeekAndPauseFromNetwork(pendingRestoreProgress);
+            else if (pendingRestoreProgress > 0f)
+                ActiveSong.SeekFromNetwork(pendingRestoreProgress);
         }
     }
 
@@ -795,7 +932,7 @@ public class TerraMainPanel : DraggableUIElement
 
         songList.Songs.Clear();
         songList.Songs.AddRange(songs);
-        songList.ActiveSongUuid = ActiveSong?.Uuid;
+        songList.ActiveSongUuid = pendingDisplayUuid ?? ActiveSong?.Uuid;
     }
 
     private void CycleFolderFilter()
@@ -837,6 +974,49 @@ public class TerraMainPanel : DraggableUIElement
         // Refresh both player and add tabs
         RefreshSongList();
         addTracksTab?.RefreshSongList();
+    }
+
+    private void SetSpecialTrack(string uuid, bool isDeathMusic)
+    {
+        var store = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+        var sStore = PersistentDataStoreSystem.GetDataStore<Content.IO.SoundpadDataStore>();
+
+        if (isDeathMusic)
+        {
+            store.DeathMusicUuid = uuid;
+            sStore.DeathSoundUuid = ""; // mutually exclusive: clear soundpad slot
+            NetLogger.Info($"[SetSpecialTrack] DeathMusicUuid set to uuid={uuid[..8]}..");
+        }
+        else
+        {
+            store.BossMusicUuid = uuid;
+            sStore.BossSoundUuid = ""; // mutually exclusive: clear soundpad slot
+            NetLogger.Info($"[SetSpecialTrack] BossMusicUuid set to uuid={uuid[..8]}..");
+        }
+        store.ForceSave();
+        sStore.ForceSave();
+
+        // In multiplayer, notify server so it can trigger playback for all clients on event
+        if (Main.netMode == NetmodeID.MultiplayerClient)
+        {
+            string hashHex = SongRegistry.Instance.GetHashByUuid(uuid);
+            if (hashHex != null)
+            {
+                byte[] hash = ContentHash.HexToHash(hashHex);
+                string title = "", author = "";
+                string txtPath = Path.Combine(Terra_Namp.CachePath, $"{uuid}.txt");
+                if (File.Exists(txtPath))
+                {
+                    string[] lines = File.ReadAllLines(txtPath);
+                    if (lines.Length >= 1) title = lines[0];
+                    if (lines.Length >= 2) author = lines[1];
+                }
+                if (isDeathMusic)
+                    PacketBuilder.SetDeathTrack((byte)Main.myPlayer, hash, title, author).Send();
+                else
+                    PacketBuilder.SetBossTrack((byte)Main.myPlayer, hash, title, author).Send();
+            }
+        }
     }
 
 }

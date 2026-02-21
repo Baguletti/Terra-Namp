@@ -31,6 +31,7 @@ namespace Terra_Namp.Content.IO
         private const string AmbientVolumeLevelTag = "Terra_Namp:AmbientVolumeLevel";
         private const string OriginalSoundVolumeTag = "Terra_Namp:OriginalSoundVolume";
         private const string OriginalAmbientVolumeTag = "Terra_Namp:OriginalAmbientVolume";
+        // Boss/death UUIDs intentionally NOT persisted — session-only, server resets on recompile
 
         public PlayMode PlayMode { get; set; }
         public VisualizerType VisualizerType { get; set; } = VisualizerType.Bars;
@@ -42,6 +43,9 @@ namespace Terra_Namp.Content.IO
 
         public float OriginalSoundVolume { get; set; } = -1f;
         public float OriginalAmbientVolume { get; set; } = -1f;
+
+        public string BossMusicUuid { get; set; } = "";
+        public string DeathMusicUuid { get; set; } = "";
 
         public float VolumeLevel { get; set; } = 0.5f;
 
@@ -131,6 +135,7 @@ namespace Terra_Namp.Content.IO
                 OriginalSoundVolume = tag.GetFloat(OriginalSoundVolumeTag);
             if (tag.ContainsKey(OriginalAmbientVolumeTag))
                 OriginalAmbientVolume = tag.GetFloat(OriginalAmbientVolumeTag);
+            // BossMusicUuid / DeathMusicUuid not loaded — session-only
         }
 
         public override void SaveGlobal(TagCompound tag)
@@ -158,6 +163,7 @@ namespace Terra_Namp.Content.IO
             tag[AmbientVolumeLevelTag] = AmbientVolumeLevel;
             tag[OriginalSoundVolumeTag] = OriginalSoundVolume;
             tag[OriginalAmbientVolumeTag] = OriginalAmbientVolume;
+            // BossMusicUuid / DeathMusicUuid not saved — session-only
         }
     }
 }

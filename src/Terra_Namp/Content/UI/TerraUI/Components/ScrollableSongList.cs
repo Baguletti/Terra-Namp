@@ -4,6 +4,7 @@ using Terra_Namp.Common.UI.Abstract;
 using Terra_Namp.Content.IO;
 using Terra_Namp.Content.UI.TerraUI;
 using Terra_Namp.Core.IO;
+using Terra_Namp.Core.UI;
 using ReLogic.Graphics;
 using System;
 using System.Collections.Generic;
@@ -19,15 +20,18 @@ public class ScrollableSongList : ScrollablePanel
 
     private int hoveredIndex = -1;
 
-    // Scrolling text for song titles
     private Dictionary<string, TextBanner> songBanners = new();
     private string lastSongsHash = "";
+
+    private readonly ContextMenu contextMenu = new();
 
     public List<(string Title, string Uuid)> Songs { get; } = new();
     public string ActiveSongUuid { get; set; }
 
     public event Action<string> OnSongSelected;
     public event Action<string> OnSongDeleted;
+    public event Action<string> OnSetAsBossMusic;
+    public event Action<string> OnSetAsDeathMusic;
 
     public ScrollableSongList()
     {
@@ -54,14 +58,13 @@ public class ScrollableSongList : ScrollablePanel
             return;
         }
 
-        // Create TextBanners if song list changed
         string currentHash = string.Join("|", Songs.ConvertAll(s => s.Uuid));
         if (currentHash != lastSongsHash)
         {
             songBanners.Clear();
             for (int i = 0; i < Songs.Count; i++)
             {
-                int textWidth = bounds.Width - 20; // Leave space for scrollbar
+                int textWidth = bounds.Width - 20;
                 Rectangle textRect = new(bounds.X + 8, 0, textWidth, ItemHeight);
                 songBanners[Songs[i].Uuid] = new TextBanner(Songs[i].Title, textRect, font, scale);
             }
@@ -87,43 +90,76 @@ public class ScrollableSongList : ScrollablePanel
             else if (isHovered)
                 spriteBatch.Draw(TextureAssets.MagicPixel.Value, itemRect, Color.White * 0.07f);
 
-            // Update and draw scrolling text
+            // Event assignment indicators
+            var tStore = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+            bool isBossTrack  = !string.IsNullOrEmpty(tStore.BossMusicUuid)  && tStore.BossMusicUuid  == Songs[i].Uuid;
+            bool isDeathTrack = !string.IsNullOrEmpty(tStore.DeathMusicUuid) && tStore.DeathMusicUuid == Songs[i].Uuid;
+            if (isBossTrack || isDeathTrack)
+            {
+                Rectangle marker = new(itemRect.Right - 6, itemRect.Y + 2, 3, ItemHeight - 4);
+                spriteBatch.Draw(TextureAssets.MagicPixel.Value, marker, accentColor * 0.85f);
+            }
+
             Color titleColor = isActive ? accentColor : Color.White * 0.8f;
             Vector2 textPos = new(bounds.X + 8, y + (ItemHeight - font.MeasureString("A").Y * scale) / 2f);
 
             if (songBanners.TryGetValue(Songs[i].Uuid, out TextBanner banner))
             {
-                // Update rectangle to current Y position for proper scissor clipping
                 int textWidth = bounds.Width - 20;
                 banner.UpdateRectangle(new Rectangle(bounds.X + 8, y, textWidth, ItemHeight));
                 banner.UpdateScrolling();
                 banner.Draw(spriteBatch, textPos, titleColor);
             }
 
-            // Separator
             spriteBatch.Draw(TextureAssets.MagicPixel.Value,
                 new Rectangle(bounds.X + 4, y + ItemHeight - 1, bounds.Width - 8, 1),
                 Color.White * 0.05f);
         }
     }
 
+    public override void Draw(SpriteBatch spriteBatch)
+    {
+        base.Draw(spriteBatch); // handles scissor internally
+
+        // Context menu drawn after scissor is restored
+        Color accent = PersistentDataStoreSystem.GetDataStore<TerraDataStore>().PanelColor;
+        contextMenu.Draw(spriteBatch, accent);
+
+        if (contextMenu.ContainsMouse())
+            Main.LocalPlayer.mouseInterface = true;
+    }
+
     public override void SafeClick(UIMouseEvent evt)
     {
+        // Context menu has priority
+        if (contextMenu.HandleLeftClick(Main.MouseScreen.ToPoint())) return;
+
         if (!IsScrollbarDragging && hoveredIndex >= 0 && hoveredIndex < Songs.Count)
             OnSongSelected?.Invoke(Songs[hoveredIndex].Uuid);
     }
 
-    public bool AllowDelete { get; set; } = true;
-
     public override void SafeRightClick(UIMouseEvent evt)
     {
-        if (!AllowDelete) return;
-
-        if (hoveredIndex >= 0 && hoveredIndex < Songs.Count)
+        // Dismiss context menu if already open
+        if (contextMenu.IsVisible)
         {
-            string uuidToDelete = Songs[hoveredIndex].Uuid;
-            hoveredIndex = -1; // Reset immediately to prevent accessing deleted item
-            OnSongDeleted?.Invoke(uuidToDelete);
+            contextMenu.Hide();
+            return;
         }
+
+        if (hoveredIndex < 0 || hoveredIndex >= Songs.Count) return;
+
+        string uuid = Songs[hoveredIndex].Uuid;
+
+        var store = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+        string bossLabel  = store.BossMusicUuid  == uuid ? "Boss Music  [active]" : "Set as Boss Music";
+        string deathLabel = store.DeathMusicUuid == uuid ? "Death Music [active]" : "Set as Death Music";
+
+        contextMenu.Show(Main.MouseScreen.ToPoint(), new List<(string, Action)>
+        {
+            (bossLabel,  () => OnSetAsBossMusic?.Invoke(uuid)),
+            (deathLabel, () => OnSetAsDeathMusic?.Invoke(uuid)),
+            ("Delete",   () => { hoveredIndex = -1; OnSongDeleted?.Invoke(uuid); }),
+        });
     }
 }

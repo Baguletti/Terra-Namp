@@ -6,6 +6,7 @@ using Terra_Namp.Content.IO;
 using Terra_Namp.Content.UI.TerraUI;
 using Terra_Namp.Content.UI.TerraUI.Components;
 using Terra_Namp.Core.IO;
+using Terra_Namp.Networking;
 using Terra_Namp.Core.UI;
 using ReLogic.Graphics;
 using System;
@@ -39,6 +40,8 @@ public class SoundpadPopup : DraggableUIElement
     private PressAnimator[] padAnimators;
     private PressAnimator navLeftAnimator;
     private PressAnimator navRightAnimator;
+
+    private readonly ContextMenu contextMenu = new();
 
     public override Rectangle DragBox
     {
@@ -149,9 +152,14 @@ public class SoundpadPopup : DraggableUIElement
             Rectangle btnRect = padAnimators[localIdx].GetAnimatedBounds(baseBtnRect);
             bool hover = baseBtnRect.Contains(mousePoint);
 
+            bool isBossPad  = !string.IsNullOrEmpty(soundStore.BossSoundUuid)  && soundStore.BossSoundUuid  == soundStore.Sounds[idx].Uuid;
+            bool isDeathPad = !string.IsNullOrEmpty(soundStore.DeathSoundUuid) && soundStore.DeathSoundUuid == soundStore.Sounds[idx].Uuid;
+            bool isEventPad = isBossPad || isDeathPad;
+
             DrawingUtils.DrawRoundedRect(spriteBatch, btnRect,
                 hover ? accent * 0.15f : Color.White * 0.06f, 5);
             DrawingUtils.DrawRoundedBorder(spriteBatch, btnRect,
+                isEventPad ? accent * 0.9f :
                 hover ? accent * 0.5f : Color.White * 0.1f, 5);
 
             string name = soundStore.Sounds[idx].DisplayName;
@@ -178,8 +186,6 @@ public class SoundpadPopup : DraggableUIElement
             EmojiRenderer.DrawString(spriteBatch, font, name, namePos,
                 hover ? accent : Color.White * 0.8f, nameScale);
 
-            if (hover)
-                Main.instance.MouseText(soundStore.Sounds[idx].DisplayName);
         }
 
         if (soundStore.Sounds.Count == 0)
@@ -237,6 +243,11 @@ public class SoundpadPopup : DraggableUIElement
         }
 
         if (IsMouseHovering)
+            Main.LocalPlayer.mouseInterface = true;
+
+        // Context menu overlay
+        contextMenu.Draw(spriteBatch, accent);
+        if (contextMenu.ContainsMouse())
             Main.LocalPlayer.mouseInterface = true;
 
         base.DraggableDraw(spriteBatch);
@@ -314,7 +325,79 @@ public class SoundpadPopup : DraggableUIElement
             }
         }
 
-        playbackController?.Update();
+        // Note: playbackController.Update() is called by TerraMainPanel.DraggableUpdate
+        // to ensure it always runs regardless of which UI is visible.
+    }
+
+    public override void SafeRightClick(UIMouseEvent evt)
+    {
+        if (Main.gameMenu || Main.playerInventory) return;
+
+        if (contextMenu.IsVisible) { contextMenu.Hide(); return; }
+
+        var soundStore = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
+        Rectangle drawBox = GetDimensions().ToRectangle();
+        Point mouse = Main.MouseScreen.ToPoint();
+
+        int y = drawBox.Y + TitleBarHeight + 8;
+        int totalItems = soundStore.Sounds.Count;
+        int startIndex = currentPage * ItemsPerPage;
+        int endIndex = Math.Min(startIndex + ItemsPerPage, totalItems);
+
+        for (int idx = startIndex; idx < endIndex; idx++)
+        {
+            int localIdx = idx - startIndex;
+            int col = localIdx % ButtonsPerRow;
+            int row = localIdx / ButtonsPerRow;
+            int bx = drawBox.X + (drawBox.Width - GridWidth) / 2 + col * (ButtonSize + ButtonGap);
+            int by = y + row * (ButtonSize + ButtonGap);
+            Rectangle btnRect = new(bx, by, ButtonSize, ButtonSize);
+            if (btnRect.Contains(mouse))
+            {
+                string uuid = soundStore.Sounds[idx].Uuid;
+                string bossLabel  = soundStore.BossSoundUuid  == uuid ? "Boss Sound  [active]" : "Set as Boss Sound";
+                string deathLabel = soundStore.DeathSoundUuid == uuid ? "Death Sound [active]" : "Set as Death Sound";
+                contextMenu.Show(mouse, new System.Collections.Generic.List<(string, System.Action)>
+                {
+                    (bossLabel,  () => SetSpecialSound(uuid, isDeath: false)),
+                    (deathLabel, () => SetSpecialSound(uuid, isDeath: true)),
+                    ("Delete",   () =>
+                    {
+                        soundStore.RemoveSound(uuid);
+                        int newTotalPages = Math.Max(1, (soundStore.Sounds.Count + ItemsPerPage - 1) / ItemsPerPage);
+                        if (currentPage >= newTotalPages) currentPage = newTotalPages - 1;
+                    }),
+                });
+                return;
+            }
+        }
+    }
+
+    private void SetSpecialSound(string uuid, bool isDeath)
+    {
+        var store = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
+        var tStore = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+
+        if (isDeath)
+        {
+            store.DeathSoundUuid = uuid;
+            tStore.DeathMusicUuid = ""; // mutually exclusive
+        }
+        else
+        {
+            store.BossSoundUuid = uuid;
+            tStore.BossMusicUuid = ""; // mutually exclusive
+        }
+        store.ForceSave();
+        tStore.ForceSave();
+
+        if (Main.netMode == Terraria.ID.NetmodeID.MultiplayerClient)
+        {
+            if (isDeath)
+                Networking.PacketBuilder.SetDeathSoundpad((byte)Main.myPlayer, uuid).Send();
+            else
+                Networking.PacketBuilder.SetBossSoundpad((byte)Main.myPlayer, uuid).Send();
+        }
     }
 
     public override void SafeClick(UIMouseEvent evt)
@@ -322,6 +405,8 @@ public class SoundpadPopup : DraggableUIElement
         // Block clicks when any menu/inventory is open to prevent click-through
         if (Main.gameMenu || Main.playerInventory)
             return;
+
+        if (contextMenu.HandleLeftClick(Main.MouseScreen.ToPoint())) return;
 
         var soundStore = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
         Rectangle drawBox = GetDimensions().ToRectangle();

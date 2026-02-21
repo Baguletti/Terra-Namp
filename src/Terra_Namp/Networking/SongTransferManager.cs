@@ -16,6 +16,7 @@ public struct PendingPlayback
     public bool Forced;
     public float SeekProgress;
     public bool SlowedReverb;
+    public bool IsEventTriggered; // true when sender=255 (boss/death event)
 }
 
 public class InboundTransfer
@@ -97,9 +98,9 @@ public class SongTransferManager : ModSystem
 
     // --- Client methods ---
 
-    public void SetPendingPlayback(string hashHex, string title, string author, bool forced, float seekProgress = 0f, bool slowedReverb = false)
+    public void SetPendingPlayback(string hashHex, string title, string author, bool forced, float seekProgress = 0f, bool slowedReverb = false, bool isEventTriggered = false)
     {
-        NetLogger.Transfer($"SetPendingPlayback: hash={hashHex[..8]}.. title=\"{title}\" forced={forced} seek={seekProgress:F3} slowedReverb={slowedReverb}");
+        NetLogger.Transfer($"SetPendingPlayback: hash={hashHex[..8]}.. title=\"{title}\" forced={forced} seek={seekProgress:F3} slowedReverb={slowedReverb} event={isEventTriggered}");
         pendingPlaybacks[hashHex] = new PendingPlayback
         {
             HashHex = hashHex,
@@ -107,6 +108,7 @@ public class SongTransferManager : ModSystem
             Forced = forced,
             SeekProgress = seekProgress,
             SlowedReverb = slowedReverb,
+            IsEventTriggered = isEventTriggered,
         };
     }
 
@@ -185,7 +187,9 @@ public class SongTransferManager : ModSystem
             Main.QueueMainThreadAction(() =>
             {
                 var panel = TerraUILoader.GetUIState<TerraState>()?.MainPanel;
-                if (pending.SeekProgress > 0f)
+                if (pending.IsEventTriggered)
+                    panel?.BeginPlayingEventSong(uuid, pending.Forced);
+                else if (pending.SeekProgress > 0f)
                     panel?.BeginPlayingSongFromNetwork(uuid, pending.Forced, pending.SeekProgress);
                 else
                     panel?.BeginPlayingSongFromNetwork(uuid, pending.Forced);

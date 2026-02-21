@@ -30,6 +30,7 @@ ffmpeg -y -i "$INPUT" \
 echo "Pass 2: Encoding GIF..."
 ffmpeg -y -i "$INPUT" -i "$PALETTE" \
     -lavfi "fps=$FPS,scale=$WIDTH:-1:flags=lanczos [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+    -loop 0 \
     "$OUTPUT" 2>/dev/null
 
 SIZE=$(stat -c%s "$OUTPUT" 2>/dev/null || stat -f%z "$OUTPUT")

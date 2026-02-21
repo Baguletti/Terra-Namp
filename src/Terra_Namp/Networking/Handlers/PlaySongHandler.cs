@@ -44,10 +44,14 @@ public static class PlaySongHandler
             if (localUuid != null)
             {
                 NetLogger.Info($"Song found in local cache: uuid={localUuid[..8]}.. Starting playback");
+                bool isEventTriggered = sender == 255;
                 Main.QueueMainThreadAction(() =>
                 {
                     var panel = TerraUILoader.GetUIState<TerraState>()?.MainPanel;
-                    panel?.BeginPlayingSongFromNetwork(localUuid, forced);
+                    if (isEventTriggered)
+                        panel?.BeginPlayingEventSong(localUuid, forced);
+                    else
+                        panel?.BeginPlayingSongFromNetwork(localUuid, forced);
 
                     if (forced)
                         ModContent.GetInstance<TerraTrackUpdaterSystem>().CurrentlyForcingSong = true;
@@ -56,7 +60,7 @@ public static class PlaySongHandler
             else
             {
                 NetLogger.Transfer($"Song NOT in cache, requesting transfer for hash={hashHex[..8]}..");
-                SongTransferManager.Instance?.SetPendingPlayback(hashHex, title, author, forced);
+                SongTransferManager.Instance?.SetPendingPlayback(hashHex, title, author, forced, isEventTriggered: sender == 255);
 
                 var requestPacket = PacketBuilder.RequestSong((byte)Main.myPlayer, hash);
                 requestPacket.Send();

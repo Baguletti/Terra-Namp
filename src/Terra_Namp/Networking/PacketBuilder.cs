@@ -156,6 +156,49 @@ public static class PacketBuilder
         return packet;
     }
 
+    public static ModPacket SetBossTrack(byte senderIndex, byte[] hash, string title, string author)
+    {
+        ModPacket packet = Create(PacketType.SetBossTrack);
+        packet.Write(senderIndex);
+        packet.Write(hash);
+        WriteString(packet, title);
+        WriteString(packet, author);
+        return packet;
+    }
+
+    public static ModPacket SetDeathTrack(byte senderIndex, byte[] hash, string title, string author)
+    {
+        ModPacket packet = Create(PacketType.SetDeathTrack);
+        packet.Write(senderIndex);
+        packet.Write(hash);
+        WriteString(packet, title);
+        WriteString(packet, author);
+        return packet;
+    }
+
+    public static ModPacket SetBossSoundpad(byte senderIndex, string uuid)
+    {
+        ModPacket packet = Create(PacketType.SetBossSoundpad);
+        packet.Write(senderIndex);
+        WriteString(packet, uuid);
+        return packet;
+    }
+
+    public static ModPacket SetDeathSoundpad(byte senderIndex, string uuid)
+    {
+        ModPacket packet = Create(PacketType.SetDeathSoundpad);
+        packet.Write(senderIndex);
+        WriteString(packet, uuid);
+        return packet;
+    }
+
+    public static ModPacket PlaySoundpadSound(string uuid)
+    {
+        ModPacket packet = Create(PacketType.PlaySoundpadSound);
+        WriteString(packet, uuid);
+        return packet;
+    }
+
     private static void WriteString(ModPacket packet, string value)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(value);

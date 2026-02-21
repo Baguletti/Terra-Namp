@@ -61,6 +61,21 @@ public static class PacketRouter
             case PacketType.PermissionSync:
                 PermissionSyncHandler.Handle(reader, whoAmI);
                 break;
+            case PacketType.SetBossTrack:
+                SetBossTrackHandler.Handle(reader, whoAmI);
+                break;
+            case PacketType.SetDeathTrack:
+                SetDeathTrackHandler.Handle(reader, whoAmI);
+                break;
+            case PacketType.SetBossSoundpad:
+                SetBossSoundpadHandler.Handle(reader, whoAmI);
+                break;
+            case PacketType.SetDeathSoundpad:
+                SetDeathSoundpadHandler.Handle(reader, whoAmI);
+                break;
+            case PacketType.PlaySoundpadSound:
+                PlaySoundpadSoundHandler.Handle(reader, whoAmI);
+                break;
         }
     }
 }

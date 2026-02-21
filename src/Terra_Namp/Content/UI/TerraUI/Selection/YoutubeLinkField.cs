@@ -1,4 +1,4 @@
-﻿// Credit to Scalie for TextField - https://github.com/ScalarVector1/DragonLens/blob/master/Content/GUI/FieldEditors/TextField.cs
+// Credit to Scalie for TextField - https://github.com/ScalarVector1/DragonLens/blob/master/Content/GUI/FieldEditors/TextField.cs
 
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework;
@@ -6,6 +6,7 @@ using Terra_Namp.Common.UI.Abstract;
 using Terra_Namp.Content.IO;
 using Terra_Namp.Content.UI.TerraUI.Components;
 using Terra_Namp.Core.IO;
+using Terra_Namp.Core.UI;
 using ReLogic.Localization.IME;
 using Terraria.GameContent;
 using Terraria.GameInput;
@@ -24,12 +25,13 @@ public class YoutubeLinkField : SmartUIElement
 
     public Color? HighlightColor { get; set; } // null = default style, not null = highlight during download
 
-    public string CurrentValue { get; set; } = "";
+    public string CurrentValue
+    {
+        get => input.Text;
+        set => input.Text = value;
+    }
 
-    // Composition string is handled at the very beginning of the update.
-    // In order to check if there is a composition string before backspace is typed, we need to check the previous state.
-    private bool _oldHasCompositionString;
-
+    private readonly TextInputHandler input = new();
     private bool typing;
     private bool updated;
     private bool reset;
@@ -49,6 +51,8 @@ public class YoutubeLinkField : SmartUIElement
     public override void SafeClick(UIMouseEvent evt)
     {
         SetTyping();
+        var bounds = GetDimensions().ToRectangle();
+        input.SetCursorFromClickPlain(FontAssets.MouseText.Value, 0.85f, bounds.X + 8, Main.MouseScreen.X);
     }
 
     public override void SafeUpdate(GameTime gameTime)
@@ -77,24 +81,11 @@ public class YoutubeLinkField : SmartUIElement
             SetNotTyping();
         }
 
-        PlayerInput.WritingText = true;
-        Main.instance.HandleIME();
+        string old = input.Text;
+        input.HandleInput();
 
-        string newText = Main.GetInputText(CurrentValue);
-
-        // GetInputText() handles typing operation, but there is a issue that it doesn't handle backspace correctly when the composition string is not empty. It will delete a character both in the text and the composition string instead of only the one in composition string. We'll fix the issue here to provide a better user experience
-        if (_oldHasCompositionString && Main.inputText.IsKeyDown(Keys.Back))
-        {
-            newText = CurrentValue; // force text not to be changed
-        }
-
-        if (newText != CurrentValue)
-        {
-            CurrentValue = newText;
+        if (input.Text != old)
             updated = true;
-        }
-
-        _oldHasCompositionString = Platform.Get<IImeService>().CompositionString is { Length: > 0 };
     }
 
     public override void Draw(SpriteBatch spriteBatch)
@@ -153,11 +144,15 @@ public class YoutubeLinkField : SmartUIElement
 
         const float scale = 0.85f;
 
-        string displayed = CurrentValue ?? "";
+        string displayed = input.Text ?? "";
 
         int stringWidth = (int)(FontAssets.MouseText.Value.MeasureString(displayed).X * scale);
 
-        float positionOffset = Math.Max(stringWidth - (drawBox.Width - 8) + 16, 0);
+        // Scroll text so cursor is always visible
+        string beforeCursor = displayed[..Math.Min(input.CursorPos, displayed.Length)];
+        int cursorPixelX = (int)(FontAssets.MouseText.Value.MeasureString(beforeCursor).X * scale);
+        int fieldWidth = drawBox.Width - 16;
+        float positionOffset = Math.Max(cursorPixelX - fieldWidth + 8, 0);
 
         Vector2 pos = GetDimensions().Position() + Vector2.One * 8 - new Vector2(positionOffset, 0);
 
@@ -169,18 +164,18 @@ public class YoutubeLinkField : SmartUIElement
             return;
         }
 
-        pos.X += stringWidth;
-
+        // IME composition string
+        float cursorDrawX = pos.X + cursorPixelX;
         string compositionString = Platform.Get<IImeService>().CompositionString;
 
         if (compositionString is { Length: > 0 })
         {
-            Utils.DrawBorderString(spriteBatch, compositionString, pos, new Color(255, 240, 20), scale);
-            pos.X += FontAssets.MouseText.Value.MeasureString(compositionString).X * scale;
+            Utils.DrawBorderString(spriteBatch, compositionString, new Vector2(cursorDrawX, pos.Y), new Color(255, 240, 20), scale);
+            cursorDrawX += FontAssets.MouseText.Value.MeasureString(compositionString).X * scale;
         }
 
         if (Main.GameUpdateCount % 20 < 10)
-            Utils.DrawBorderString(spriteBatch, "|", pos, Color.White, scale);
+            Utils.DrawBorderString(spriteBatch, "|", new Vector2(cursorDrawX, pos.Y), Color.White, scale);
 
         RestartSpriteBatch(spriteBatch);
 

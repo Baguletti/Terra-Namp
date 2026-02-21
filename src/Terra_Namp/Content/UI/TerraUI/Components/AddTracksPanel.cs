@@ -131,6 +131,8 @@ public class AddTracksPanel : SmartUIElement
         songList.Left.Set(Padding, 0);
         songList.Width.Set(contentWidth, 0);
         songList.OnSongDeleted += HandleSongDeleted;
+        songList.OnSetAsBossMusic += uuid => SetSpecialTrack(uuid, isDeathMusic: false);
+        songList.OnSetAsDeathMusic += uuid => SetSpecialTrack(uuid, isDeathMusic: true);
         Append(songList);
 
         // Set initial positions
@@ -193,6 +195,16 @@ public class AddTracksPanel : SmartUIElement
     {
         OnTrackDeleted?.Invoke(uuid);
         RefreshSongList();
+    }
+
+    private static void SetSpecialTrack(string uuid, bool isDeathMusic)
+    {
+        var store = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+        if (isDeathMusic)
+            store.DeathMusicUuid = uuid;
+        else
+            store.BossMusicUuid = uuid;
+        store.ForceSave();
     }
 
     private void CycleFolderFilter()

@@ -7,6 +7,7 @@ using Terra_Namp.Content.UI.TerraUI;
 using Terra_Namp.Core.IO;
 using Terra_Namp.Core.Services;
 using Terra_Namp.Core.UI;
+using Terra_Namp.Networking;
 using ReLogic.Graphics;
 using System;
 using System.IO;
@@ -36,7 +37,7 @@ public class SoundpadPanel : SmartUIElement
     private const int EmojiScrollbarHitWidth = 10;
 
     private SoundpadPlaybackController playbackController;
-    private string pendingName = "";
+    private readonly TextInputHandler nameInput = new();
     private bool nameFieldFocused;
     private string statusMessage;
     private int statusTimer;
@@ -54,6 +55,8 @@ public class SoundpadPanel : SmartUIElement
     private int emojiPickerCols;
     private bool emojiScrollDragging;
     private float emojiScrollDragOffsetY;
+
+    private readonly ContextMenu contextMenu = new();
 
     // Press animations
     private PressAnimator[] padAnimators;
@@ -168,36 +171,28 @@ public class SoundpadPanel : SmartUIElement
         DrawingUtils.DrawRoundedBorder(spriteBatch, nameRect,
             nameFieldFocused ? accent * 0.5f : Color.White * 0.1f, 4);
 
-        // Handle text input in Draw phase
+        // Handle text input
         if (nameFieldFocused)
         {
-            Terraria.GameInput.PlayerInput.WritingText = true;
-            Main.instance.HandleIME();
-            pendingName = Main.GetInputText(pendingName);
+            nameInput.HandleInput();
 
             if (Main.keyState.IsKeyDown(Microsoft.Xna.Framework.Input.Keys.Escape))
             {
                 nameFieldFocused = false;
-                pendingName = "";
+                nameInput.Clear();
             }
         }
 
+        string pendingName = nameInput.Text;
         string displayText = string.IsNullOrEmpty(pendingName) && !nameFieldFocused ? "Enter name..." : pendingName;
         Color textColor = string.IsNullOrEmpty(pendingName) && !nameFieldFocused ? Color.White * 0.3f : Color.White * 0.9f;
         float textScale = 0.6f;
         Vector2 textPos = new(nameRect.X + 6, nameRect.Y + (nameRect.Height - font.MeasureString("A").Y * textScale) / 2f);
         EmojiRenderer.DrawString(spriteBatch, font, displayText, textPos, textColor, textScale);
 
-        // Cursor blink
-        if (nameFieldFocused && Main.GameUpdateCount % 40 < 20)
-        {
-            float cursorX = nameRect.X + 6 + EmojiRenderer.MeasureWidth(font, pendingName, textScale) + 1;
-            float cursorY = nameRect.Y + 4;
-            float cursorHeight = nameRect.Height - 8;
-            spriteBatch.Draw(TextureAssets.MagicPixel.Value,
-                new Rectangle((int)cursorX, (int)cursorY, 2, (int)cursorHeight),
-                Color.White * 0.8f);
-        }
+        // Cursor
+        if (nameFieldFocused)
+            nameInput.DrawCursor(spriteBatch, font, textScale, nameRect.X + 6, nameRect.Y, nameRect.Height, Color.White * 0.8f);
 
         // Add button
         Rectangle baseAddRect = new(nameRect.X + nameRect.Width + 4, y, addBtnWidth, NameFieldHeight);
@@ -247,9 +242,14 @@ public class SoundpadPanel : SmartUIElement
             Rectangle btnRect = padAnimators[localIdx].GetAnimatedBounds(baseBtnRect);
             bool hover = baseBtnRect.Contains(mousePoint) && !showEmojiPicker;
 
+            bool isBossPad  = !string.IsNullOrEmpty(store.BossSoundUuid)  && store.BossSoundUuid  == store.Sounds[idx].Uuid;
+            bool isDeathPad = !string.IsNullOrEmpty(store.DeathSoundUuid) && store.DeathSoundUuid == store.Sounds[idx].Uuid;
+            bool isEventPad = isBossPad || isDeathPad;
+
             DrawingUtils.DrawRoundedRect(spriteBatch, btnRect,
                 hover ? accent * 0.15f : Color.White * 0.06f, 5);
             DrawingUtils.DrawRoundedBorder(spriteBatch, btnRect,
+                isEventPad ? accent * 0.9f :
                 hover ? accent * 0.5f : Color.White * 0.1f, 5);
 
             string name = store.Sounds[idx].DisplayName;
@@ -296,8 +296,6 @@ public class SoundpadPanel : SmartUIElement
                 EmojiRenderer.DrawString(spriteBatch, font, name, namePos, padTextColor, nameScale);
             }
 
-            if (hover)
-                Main.instance.MouseText(store.Sounds[idx].DisplayName);
         }
 
         // Empty state
@@ -359,6 +357,11 @@ public class SoundpadPanel : SmartUIElement
         }
 
         if (showEmojiPicker && emojiPickerBounds.Width > 0 && emojiPickerBounds.Contains(mousePoint))
+            Main.LocalPlayer.mouseInterface = true;
+
+        // Context menu overlay (drawn after everything else)
+        contextMenu.Draw(spriteBatch, accent);
+        if (contextMenu.ContainsMouse())
             Main.LocalPlayer.mouseInterface = true;
 
         base.Draw(spriteBatch);
@@ -596,7 +599,8 @@ public class SoundpadPanel : SmartUIElement
             showEmojiPicker = false;
         }
 
-        playbackController?.Update();
+        // Note: playbackController.Update() is called by TerraMainPanel.DraggableUpdate
+        // to ensure it runs even when this tab is not in the UI tree.
     }
 
     public override void SafeMouseDown(UIMouseEvent evt)
@@ -641,6 +645,8 @@ public class SoundpadPanel : SmartUIElement
 
     public override void SafeClick(UIMouseEvent evt)
     {
+        if (contextMenu.HandleLeftClick(Main.MouseScreen.ToPoint())) return;
+
         Rectangle bounds = GetDimensions().ToRectangle();
         var store = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
         Point mouse = Main.MouseScreen.ToPoint();
@@ -677,6 +683,7 @@ public class SoundpadPanel : SmartUIElement
         if (nameRect.Contains(mouse))
         {
             nameFieldFocused = true;
+            nameInput.SetCursorFromClick(FontAssets.MouseText.Value, 0.6f, nameRect.X + 6, mouse.X);
             return;
         }
         else
@@ -774,7 +781,7 @@ public class SoundpadPanel : SmartUIElement
                 if (cellRect.Contains(mouse))
                 {
                     string emoji = char.ConvertFromUtf32(emojiCodepoints[idx]);
-                    pendingName += emoji;
+                    nameInput.InsertAtCursor(emoji);
                     showEmojiPicker = false;
                     return;
                 }
@@ -790,6 +797,12 @@ public class SoundpadPanel : SmartUIElement
             return;
         }
 
+        if (contextMenu.IsVisible)
+        {
+            contextMenu.Hide();
+            return;
+        }
+
         Rectangle bounds = GetDimensions().ToRectangle();
         var store = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
         Point mouse = Main.MouseScreen.ToPoint();
@@ -799,7 +812,6 @@ public class SoundpadPanel : SmartUIElement
             y += 16;
 
         int totalItems = store.Sounds.Count;
-        int totalPages = Math.Max(1, (totalItems + ItemsPerPage - 1) / ItemsPerPage);
         int startIndex = currentPage * ItemsPerPage;
         int endIndex = Math.Min(startIndex + ItemsPerPage, totalItems);
 
@@ -815,14 +827,21 @@ public class SoundpadPanel : SmartUIElement
             Rectangle btnRect = new(bx, by, ButtonSize, ButtonSize);
             if (btnRect.Contains(mouse))
             {
-                store.RemoveSound(store.Sounds[idx].Uuid);
-                SetStatus("Sound deleted.");
-
-                int newTotal = store.Sounds.Count;
-                int newTotalPages = Math.Max(1, (newTotal + ItemsPerPage - 1) / ItemsPerPage);
-                if (currentPage >= newTotalPages)
-                    currentPage = newTotalPages - 1;
-
+                string uuid = store.Sounds[idx].Uuid;
+                string bossLabel  = store.BossSoundUuid  == uuid ? "Boss Sound  [active]" : "Set as Boss Sound";
+                string deathLabel = store.DeathSoundUuid == uuid ? "Death Sound [active]" : "Set as Death Sound";
+                contextMenu.Show(mouse, new System.Collections.Generic.List<(string, System.Action)>
+                {
+                    (bossLabel,  () => SetSpecialSound(uuid, isDeath: false)),
+                    (deathLabel, () => SetSpecialSound(uuid, isDeath: true)),
+                    ("Delete",   () =>
+                    {
+                        store.RemoveSound(uuid);
+                        SetStatus("Sound deleted.");
+                        int newTotalPages = Math.Max(1, (store.Sounds.Count + ItemsPerPage - 1) / ItemsPerPage);
+                        if (currentPage >= newTotalPages) currentPage = newTotalPages - 1;
+                    }),
+                });
                 return;
             }
         }
@@ -830,13 +849,13 @@ public class SoundpadPanel : SmartUIElement
 
     private void OnAddClick()
     {
-        if (string.IsNullOrWhiteSpace(pendingName))
+        if (string.IsNullOrWhiteSpace(nameInput.Text))
         {
             SetStatus("Name required");
             return;
         }
 
-        string name = pendingName.Trim();
+        string name = nameInput.Text.Trim();
 
         var dialog = new Core.IO.MultiNativeFileDialog();
         ExtensionFilter[] filters = { new("Audio Files", "mp3") };
@@ -872,8 +891,35 @@ public class SoundpadPanel : SmartUIElement
                 error => Main.QueueMainThreadAction(() => SetStatus($"Failed: {originalFileName}")));
         }
 
-        pendingName = "";
+        nameInput.Clear();
         nameFieldFocused = false;
+    }
+
+    private void SetSpecialSound(string uuid, bool isDeath)
+    {
+        var store = PersistentDataStoreSystem.GetDataStore<SoundpadDataStore>();
+        var tStore = PersistentDataStoreSystem.GetDataStore<TerraDataStore>();
+
+        if (isDeath)
+        {
+            store.DeathSoundUuid = uuid;
+            tStore.DeathMusicUuid = ""; // mutually exclusive
+        }
+        else
+        {
+            store.BossSoundUuid = uuid;
+            tStore.BossMusicUuid = ""; // mutually exclusive
+        }
+        store.ForceSave();
+        tStore.ForceSave();
+
+        if (Main.netMode == Terraria.ID.NetmodeID.MultiplayerClient)
+        {
+            if (isDeath)
+                Networking.PacketBuilder.SetDeathSoundpad((byte)Main.myPlayer, uuid).Send();
+            else
+                Networking.PacketBuilder.SetBossSoundpad((byte)Main.myPlayer, uuid).Send();
+        }
     }
 
     private void SetStatus(string message)
@@ -881,4 +927,5 @@ public class SoundpadPanel : SmartUIElement
         statusMessage = message;
         statusTimer = 180; // ~3 seconds
     }
+
 }

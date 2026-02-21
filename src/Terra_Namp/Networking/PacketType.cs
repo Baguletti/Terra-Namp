@@ -21,4 +21,10 @@ public enum PacketType : byte
 
     PermissionUpdate = 40,
     PermissionSync = 41,
+
+    SetBossTrack     = 50,
+    SetDeathTrack    = 51,
+    SetBossSoundpad  = 52,
+    SetDeathSoundpad = 53,
+    PlaySoundpadSound = 54,
 }
